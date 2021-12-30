@@ -1,11 +1,14 @@
 import pandas as pd
 import numpy as np
+
+from DNNModel import *
 import matplotlib.pyplot as plt
 plt.style.use("seaborn")
 pd.set_option('display.float_format', lambda x: '%.5f' % x)
 
 data = pd.read_csv("DNN_data.csv", parse_dates = ["time"], index_col = "time")
-
+symbol = data.columns[0]
+data["returns"] = np.log(data[symbol] / data[symbol].shift())
 window = 50
 
 df = data.copy()
@@ -43,7 +46,6 @@ mu, std = train.mean(), train.std() # train set parameters (mu, std) for standar
 
 train_s = (train - mu) / std # standardization of train set features
 
-from DNNModel import *
 
 # fitting a DNN model with 3 Hidden Layers (50 nodes each) and dropout regularization
 

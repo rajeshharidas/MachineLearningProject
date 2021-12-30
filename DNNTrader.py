@@ -38,7 +38,8 @@ class DNNTrader(tpqoa.tpqoa):
         self.std = std
         #************************************************************************
     
-    def get_most_recent(self, days = 5):        
+    def get_most_recent(self, days = 5):   
+            time.sleep(2)     
             now = datetime.utcnow()
             now = now - timedelta(microseconds = now.microsecond)
             now = now - timedelta(minutes=1,seconds=30)

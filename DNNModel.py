@@ -18,7 +18,7 @@ def cw(df):
     w1 = (1/c1) * (len(df)) / 2
     return {0:w0, 1:w1}
 
-optimizer = tf.keras.optimizers.Adam(learing_rate = 0.0001)
+optimizer = tf.keras.optimizers.Adam(learning_rate = 0.0001)
 
 def create_model(hl = 2, hu = 100, dropout = False, rate = 0.3, regularize = False,
                  reg = l1(0.0005), optimizer = optimizer, input_dim = None):
