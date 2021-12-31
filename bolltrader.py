@@ -4,6 +4,7 @@ import pandas as pd
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error,StreamTerminated
 from oandapyV20.endpoints.pricing import PricingStream
+from oandapyV20.contrib.factories import InstrumentsCandlesFactory
 
 import numpy as np
 import tpqoa
@@ -13,7 +14,7 @@ import matplotlib.pyplot as plt
 plt.style.use("seaborn")
 
 class BollTrader(tpqoa.tpqoa):
-    def __init__(self, conf_file, instrument, bar_length, SMA, dev, units):
+    def __init__(self, conf_file, instrument, bar_length, SMA,SMA_L0,SMA_U0,SMA_L1,SMA_U1,SMA_L2,SMA_U2, dev, units):
         super().__init__(conf_file)
         self.instrument = instrument
         self.bar_length = pd.to_timedelta(bar_length)
@@ -30,6 +31,12 @@ class BollTrader(tpqoa.tpqoa):
         self.api = API(access_token=self.access_token, environment="practice")
 
         #*****************add strategy-specific attributes here******************
+        self.SMA_L0 = SMA_L0
+        self.SMA_U0 = SMA_U0
+        self.SMA_L1 = SMA_L1
+        self.SMA_U1 = SMA_U1
+        self.SMA_L2 = SMA_L2
+        self.SMA_U2 = SMA_U2
         self.SMA = SMA
         self.dev = dev
         #************************************************************************
@@ -39,13 +46,21 @@ class BollTrader(tpqoa.tpqoa):
             now = now - timedelta(microseconds = now.microsecond)
             now = now - timedelta(minutes=1,seconds=30)
             past = now - timedelta(days = days)
-            df = self.get_history(instrument = self.instrument, start = past, end = now,
-                                   granularity = "S5", price = "M", localize = False).c.dropna().to_frame()
+            params = {'from':past.strftime('%Y-%m-%dT%H:%M:%SZ'), 'to':now.strftime('%Y-%m-%dT%H:%M:%SZ'),'granularity':'M15'} 
+            resList = []
+            for R in InstrumentsCandlesFactory(instrument=self.instrument,params=params):
+              self.api.request(R)
+              resList = resList + R.response.get('candles')
+            df = pd.DataFrame(resList) 
+            print(df)
+            df = pd.DataFrame(list(df['mid']),pd.to_datetime(df['time'])) 
+            
             df.rename(columns = {"c":self.instrument}, inplace = True)
+            print(df)
             df = df.resample(self.bar_length, label = "right").last().dropna().iloc[:-1]
             self.raw_data = df.copy()
             self.last_bar = self.raw_data.index[-1]
-            print ("TPQOA Last:",self.last_bar)   
+            print ("TPQOA Last:",self.last_bar) 
             s = PricingStream(accountID=self.accountID, params={"instruments":self.instrument})
             try:
                n = 0
@@ -119,14 +134,29 @@ class BollTrader(tpqoa.tpqoa):
         df = self.raw_data.copy()
         
         #******************** define your strategy here ************************
+        df["SMA_L0"] = df[self.instrument].rolling(self.SMA_L0).mean()
+        df["SMA_U0"] = df[self.instrument].rolling(self.SMA_U0).mean()
+        df["SMA_L1"] = df[self.instrument].rolling(self.SMA_L1).mean()
+        df["SMA_U1"] = df[self.instrument].rolling(self.SMA_U1).mean()
+        df["SMA_L2"] = df[self.instrument].rolling(self.SMA_L2).mean()
+        df["SMA_U2"] = df[self.instrument].rolling(self.SMA_U2).mean()
         df["SMA"] = df[self.instrument].rolling(self.SMA).mean()
         df["Lower"] = df["SMA"] - df[self.instrument].rolling(self.SMA).std() * self.dev
         df["Upper"] = df["SMA"] + df[self.instrument].rolling(self.SMA).std() * self.dev
         df["distance"] = df[self.instrument] - df.SMA
         df["position"] = np.where(df[self.instrument] < df.Lower, 1, np.nan)
         df["position"] = np.where(df[self.instrument] > df.Upper, -1, df["position"])
-        df["position"] = np.where(df.distance * df.distance.shift(1) < 0, 0, df["position"])
-        df["position"] = df.position.ffill().fillna(0)
+        df["position"] = np.where(df.distance * df.distance.shift(1) < 0, 0, df["position"])    
+        df["position"] = df.position.ffill().fillna(0)   
+        
+        if (df[self.instrument].all() > df["Lower"].all()) and (df[self.instrument].all() < df["Upper"].all()) and (df["distance"].abs().all() < 0.5):
+          sma_strat0 = np.where(df["SMA_L0"] > df["SMA_U0"], 1, -1)
+          sma_strat1 = np.where(df["SMA_L1"] > df["SMA_U1"], 1, -1)
+          sma_strat2 = np.where(df["SMA_L2"] > df["SMA_U2"], 1, -1)
+          sma_strat1 = np.sign(sma_strat0 + sma_strat1)
+          sma_strat = np.sign(sma_strat1 + sma_strat2)        
+          df["position"] = sma_strat
+          df["position"] = df.position.ffill().fillna(0)
         #***********************************************************************
         
         self.data = df.copy()
@@ -172,9 +202,9 @@ class BollTrader(tpqoa.tpqoa):
 
 if __name__ == "__main__":
         
-    trader = BollTrader(r"C:\Users\rharidas\MachineLearningProject-main\Part4_Materials\Part4_Materials\Oanda\oanda.cfg", "EUR_USD", "1min",SMA=20, dev = 1, units = 100000)
+    trader = BollTrader(r"C:\Users\rharidas\MachineLearningProject-main\Part4_Materials\Part4_Materials\Oanda\oanda.cfg", "EUR_USD", "1min",SMA=20,SMA_L0=3,SMA_U0=5,SMA_L1=5,SMA_U1=9,SMA_L2=9,SMA_U2=20, dev = 2, units = 100000)
     trader.get_most_recent()
-    trader.process_stream(trader.instrument, stopAt = 100)
+    trader.process_stream(trader.instrument, stopAt = 200)
     if trader.position != 0: 
         close_order = trader.create_order(trader.instrument, units = -trader.position * trader.units, 
                                           suppress = True, ret = True) 
