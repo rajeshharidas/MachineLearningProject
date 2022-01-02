@@ -5,6 +5,7 @@ from oandapyV20 import API
 from oandapyV20.exceptions import V20Error,StreamTerminated
 from oandapyV20.endpoints.pricing import PricingStream
 from oandapyV20.contrib.factories import InstrumentsCandlesFactory
+import talib
 
 import numpy as np
 import tpqoa
@@ -46,7 +47,7 @@ class BollTrader(tpqoa.tpqoa):
             now = now - timedelta(microseconds = now.microsecond)
             now = now - timedelta(minutes=1,seconds=30)
             past = now - timedelta(days = days)
-            params = {'from':past.strftime('%Y-%m-%dT%H:%M:%SZ'), 'to':now.strftime('%Y-%m-%dT%H:%M:%SZ'),'granularity':'M15'} 
+            params = {'from':past.strftime('%Y-%m-%dT%H:%M:%SZ'), 'to':now.strftime('%Y-%m-%dT%H:%M:%SZ'),'granularity':'M1'} 
             resList = []
             for R in InstrumentsCandlesFactory(instrument=self.instrument,params=params):
               self.api.request(R)
@@ -144,19 +145,28 @@ class BollTrader(tpqoa.tpqoa):
         df["Lower"] = df["SMA"] - df[self.instrument].rolling(self.SMA).std() * self.dev
         df["Upper"] = df["SMA"] + df[self.instrument].rolling(self.SMA).std() * self.dev
         df["distance"] = df[self.instrument] - df.SMA
+        df["half"] = df["Upper"] - df.SMA
         df["position"] = np.where(df[self.instrument] < df.Lower, 1, np.nan)
         df["position"] = np.where(df[self.instrument] > df.Upper, -1, df["position"])
         df["position"] = np.where(df.distance * df.distance.shift(1) < 0, 0, df["position"])    
         df["position"] = df.position.ffill().fillna(0)   
-        
-        if (df[self.instrument].all() > df["Lower"].all()) and (df[self.instrument].all() < df["Upper"].all()) and (df["distance"].abs().all() < 0.5):
-          sma_strat0 = np.where(df["SMA_L0"] > df["SMA_U0"], 1, -1)
-          sma_strat1 = np.where(df["SMA_L1"] > df["SMA_U1"], 1, -1)
-          sma_strat2 = np.where(df["SMA_L2"] > df["SMA_U2"], 1, -1)
-          sma_strat1 = np.sign(sma_strat0 + sma_strat1)
-          sma_strat = np.sign(sma_strat1 + sma_strat2)        
-          df["position"] = sma_strat
-          df["position"] = df.position.ffill().fillna(0)
+
+                
+        if (df[self.instrument].all() > df["Lower"].all()) and (df[self.instrument].all() < df["Upper"].all()):
+          df['rsi'] = talib.RSI(df[self.instrument], timeperiod=14)
+          df['rsi'] = df['rsi'].rolling(20).mean()
+          df['rsi'] = np.where(df['rsi']  < 30, -1, np.where(df['rsi']  > 70, 1, 0))
+
+          df['position'] = df['rsi']
+
+          if (df["distance"].abs().all() < df["half"].abs().all()):
+           sma_strat0 = np.where(df["SMA_L0"] > df["SMA_U0"], 1, -1)
+           sma_strat1 = np.where(df["SMA_L1"] > df["SMA_U1"], 1, -1)
+           sma_strat2 = np.where(df["SMA_L2"] > df["SMA_U2"], 1, -1)
+           sma_strat1 = np.sign(sma_strat0 + sma_strat1)
+           sma_strat = np.sign(sma_strat1 + sma_strat2)        
+           df["position"] = sma_strat
+           df["position"] = df.position.ffill().fillna(0)
         #***********************************************************************
         
         self.data = df.copy()
